@@ -1,0 +1,424 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: CloudFormation template for S3, RDS, and EC2 deployment
+
+Parameters:
+  DatabaseName:
+    Type: String
+    Default: cscicertificates
+    Description: The name of the database to create
+
+  DBInstanceIdentifier:
+    Type: String
+    Default: cscicertificatevis
+    Description: The identifier for the RDS instance
+
+  Username:
+    Type: String
+    Default: admin
+    Description: The username for the database
+
+  UserPassword:
+    Type: String
+    Default: admin123
+    NoEcho: true
+    Description: The password for the database
+
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Default: vpc-0cef1e3b3d53b4407
+    Description: The VPC ID where the RDS instance will be launched
+
+Resources:
+  # S3 Configuration
+  Certificatesallport:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: cardportfolioservices
+      AccessControl: Private
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+      VersioningConfiguration:
+        Status: Suspended
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      Tags:
+        - Key: Name
+          Value: certificatevisulizer
+
+  CertificatevisulizerBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref Certificatesallport
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: "PublicReadGetObject"
+            Effect: Allow
+            Principal: "*"
+            Action: "s3:GetObject"
+            Resource:
+              - !Sub "arn:aws:s3:::cardportfolioservices"
+              - !Sub "arn:aws:s3:::cardportfolioservices/*"
+
+  # RDS Configuration
+  RDSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "Allow MySQL access"
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: "tcp"
+          FromPort: 3306
+          ToPort: 3306
+          CidrIp: "0.0.0.0/0"
+
+  DalCollabRDSInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      AllocatedStorage: 20
+      AvailabilityZone: "us-east-1a"
+      DBInstanceIdentifier: !Ref DBInstanceIdentifier
+      DBName: !Ref DatabaseName
+      DBInstanceClass: "db.t3.micro"
+      Engine: "mysql"
+      EngineVersion: "8.0.35"
+      MasterUsername: !Ref Username
+      MasterUserPassword: !Ref UserPassword
+      MultiAZ: false
+      Port: 3306
+      PubliclyAccessible: true
+      StorageEncrypted: false
+      StorageType: "gp2"
+      VPCSecurityGroups:
+        - !Ref RDSSecurityGroup
+
+  RDSSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: "testsecrest"
+      Description: "Credentials for DalCollabRDSInstance"
+      SecretString: !Sub |
+        {
+          "username": "${Username}",
+          "password": "${UserPassword}",
+          "dbname": "${DatabaseName}",
+          "host": "${DalCollabRDSInstance.Endpoint.Address}",
+          "port": "3306"
+        }
+        
+ #lamdafuncation       
+  LambdaFunction:
+    Type: "AWS::Lambda::Function"
+    Properties:
+      Description: ""
+      Handler: "lambda_function.lambda_handler"
+      Architectures:
+        - "x86_64"
+      Code:
+        S3Bucket: "alllambdastoreds"
+        S3Key:
+          Fn::Sub: "registration-d619153d-d79e-45f7-b237-e9e6c5b1fec3.zip"
+      MemorySize: 128
+      Role:
+        Fn::Sub: "arn:aws:iam::${AWS::AccountId}:role/LabRole"
+      Runtime: "python3.12"
+      Timeout: 300
+      TracingConfig:
+        Mode: "PassThrough"
+      EphemeralStorage:
+        Size: 512
+
+  LambdaFunction2:
+    Type: "AWS::Lambda::Function"
+    Properties:
+      Description: ""
+      Handler: "lambda_function.lambda_handler"
+      Architectures:
+        - "x86_64"
+      Code:
+        S3Bucket: "alllambdastoreds"
+        S3Key:
+          Fn::Sub: "profilesender-c0180d46-4b56-43aa-92f6-850674332348.zip"
+      MemorySize: 128
+      Role:
+        Fn::Sub: "arn:aws:iam::${AWS::AccountId}:role/LabRole"
+      Runtime: "python3.12"
+      Timeout: 300
+      TracingConfig:
+        Mode: "PassThrough"
+      EphemeralStorage:
+        Size: 512
+
+  ApiGatewayResource1:
+    Type: "AWS::ApiGateway::Resource"
+    Properties:
+      RestApiId:
+        Ref: "ApiGatewayRestApi"
+      PathPart: "sendportfolio"
+      ParentId:
+        Fn::GetAtt:
+          - "ApiGatewayRestApi"
+          - "RootResourceId"
+
+  ApiGatewayResource2:
+    Type: "AWS::ApiGateway::Resource"
+    Properties:
+      RestApiId:
+        Ref: "ApiGatewayRestApi"
+      PathPart: "registration"
+      ParentId:
+        Fn::GetAtt:
+          - "ApiGatewayRestApi"
+          - "RootResourceId"
+
+  LambdaPermission:
+    Type: "AWS::Lambda::Permission"
+    Properties:
+      Action: "lambda:InvokeFunction"
+      FunctionName:
+        Fn::GetAtt:
+          - "LambdaFunction2"
+          - "Arn"
+      Principal: "apigateway.amazonaws.com"
+      SourceArn:
+        Fn::Sub: "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGatewayRestApi}/*/POST/sendportfolio"
+
+  LambdaPermission2:
+    Type: "AWS::Lambda::Permission"
+    Properties:
+      Action: "lambda:InvokeFunction"
+      FunctionName:
+        Fn::GetAtt:
+          - "LambdaFunction"
+          - "Arn"
+      Principal: "apigateway.amazonaws.com"
+      SourceArn:
+        Fn::Sub: "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGatewayRestApi}/*/POST/registration"
+
+  ApiGatewayRestApi:
+    Type: "AWS::ApiGateway::RestApi"
+    Properties:
+      Name: "Gatway"
+      ApiKeySourceType: "HEADER"
+      EndpointConfiguration:
+        Types:
+          - "REGIONAL"
+
+  ApiGatewayMethod:
+    Type: "AWS::ApiGateway::Method"
+    Properties:
+      RestApiId:
+        Ref: "ApiGatewayRestApi"
+      ResourceId:
+        Ref: ApiGatewayResource1
+      HttpMethod: "POST"
+      AuthorizationType: "NONE"
+      ApiKeyRequired: false
+      RequestParameters: {}
+      RequestModels: {}
+      MethodResponses:
+        - ResponseModels:
+            application/json: "Empty"
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: false
+          StatusCode: "200"
+      Integration:
+        ContentHandling: "CONVERT_TO_TEXT"
+        IntegrationHttpMethod: "POST"
+        IntegrationResponses:
+          - ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+            ResponseTemplates: {}
+            StatusCode: "200"
+        PassthroughBehavior: "WHEN_NO_MATCH"
+        TimeoutInMillis: 29000
+        Type: "AWS"
+        Uri:
+          Fn::Sub: "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${LambdaFunction2}/invocations"
+
+  ApiGatewayMethod2:
+    Type: "AWS::ApiGateway::Method"
+    Properties:
+      RestApiId:
+        Ref: "ApiGatewayRestApi"
+      ResourceId:
+        Ref: ApiGatewayResource2
+      HttpMethod: "POST"
+      AuthorizationType: "NONE"
+      ApiKeyRequired: false
+      RequestParameters: {}
+      RequestModels: {}
+      MethodResponses:
+        - ResponseModels:
+            application/json: "Empty"
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: false
+          StatusCode: "200"
+      Integration:
+        ContentHandling: "CONVERT_TO_TEXT"
+        IntegrationHttpMethod: "POST"
+        IntegrationResponses:
+          - ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+            ResponseTemplates: {}
+            StatusCode: "200"
+        PassthroughBehavior: "WHEN_NO_MATCH"
+        TimeoutInMillis: 29000
+        Type: "AWS"
+        Uri:
+          Fn::Sub: "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${LambdaFunction}/invocations"
+
+  ApiGatewayMethodOPTIONS1:
+    Type: "AWS::ApiGateway::Method"
+    Properties:
+      AuthorizationType: NONE
+      HttpMethod: OPTIONS
+      ResourceId:
+        Ref: ApiGatewayResource1
+      RestApiId:
+        Ref: "ApiGatewayRestApi"
+      Integration:
+        Type: MOCK
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'POST,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+          ResponseModels:
+            application/json: "Empty"
+
+  ApiGatewayMethodOPTIONS2:
+    Type: "AWS::ApiGateway::Method"
+    Properties:
+      AuthorizationType: NONE
+      HttpMethod: OPTIONS
+      ResourceId:
+        Ref: ApiGatewayResource2
+      RestApiId:
+        Ref: "ApiGatewayRestApi"
+      Integration:
+        Type: MOCK
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'POST,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+          ResponseModels:
+            application/json: "Empty"
+
+  ApiGatewayDeployment:
+    Type: "AWS::ApiGateway::Deployment"
+    DependsOn:
+      - ApiGatewayMethod
+      - ApiGatewayMethod2
+      - ApiGatewayMethodOPTIONS1
+      - ApiGatewayMethodOPTIONS2
+    Properties:
+      RestApiId:
+        Ref: "ApiGatewayRestApi"
+      StageName: "prod"
+
+
+  # EC2 Configuration
+  MySecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group with custom inbound rules
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+          Description: Allow HTTP traffic from everywhere
+        - IpProtocol: tcp
+          FromPort: 3000
+          ToPort: 3000
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: -1
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          CidrIp: 0.0.0.0/0
+          Description: Allow custom HTTP traffic from everywhere
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+          Description: Allow SSH traffic from everywhere
+      Tags:
+        - Key: Name
+          Value: MySecurityGroup
+
+  MyInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - EMR_EC2_DefaultRole
+
+  MyEC2Instance:
+    Type: AWS::EC2::Instance
+    DependsOn: RDSSecret
+    Properties:
+      InstanceType: t2.micro
+      KeyName: rutvik
+      ImageId: ami-0ba9883b710b05ac6
+      SecurityGroupIds:
+        - !Ref MySecurityGroup
+      IamInstanceProfile: !Ref MyInstanceProfile
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          sudo yum update -y
+          sudo yum install -y docker
+          sudo service docker start
+          sudo usermod -a -G docker ec2-user
+          docker pull rutvikvaghani/backend:latest
+          docker run -d -p 8080:8080 rutvikvaghani/backend:latest
+          docker pull rutvikvaghani/frontend:latest
+          docker run -d -p 80:80 rutvikvaghani/frontend:latest
+      Tags:
+        - Key: Name
+          Value: trial
+
+Outputs:
+  RdsInstanceId:
+    Description: "Instance ID of the newly created RDS instance"
+    Value: !Ref DalCollabRDSInstance
+
+  RdsSecurityGroupId:
+    Description: "Security Group ID of the newly created RDS security group"
+    Value: !Ref RDSSecurityGroup
+
+  RdsEndpoint:
+    Description: "The endpoint of the RDS instance"
+    Value: !GetAtt DalCollabRDSInstance.Endpoint.Address
+
+  RdsSecretArn:
+    Description: "The ARN of the Secrets Manager secret"
+    Value: !Ref RDSSecret
