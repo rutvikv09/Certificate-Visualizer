@@ -24,6 +24,8 @@
 - **Infrastructure as Code**: AWS CloudFormation
 
 ## 🏗 Architecture
+![image](https://github.com/user-attachments/assets/ae88e57e-efad-4f50-9cdc-c9f9da3ba04c)
+
 
 1. **Frontend & Backend**:
 
